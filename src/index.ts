@@ -1,6 +1,63 @@
 import { setMaxListeners } from 'node:events'
 
 /**
+ * Codes indicating the type of error that was encountered.
+ * These are found on the `Error.cause.code` field.
+ *
+ * They are:
+ *
+ * - `'GRAPHRUN_TRAVERSAL'` The command run on a given node has failed, either
+ *   by throwing an error, or by returning a rejected promise.
+ * - `'GRAPHRUN_NO_NODES'` An empty list of initial nodes was provided to the
+ *   graph run operation. At least one starting node must be present in the
+ *   list.
+ * - `'GRAPHRUN_CYCLE_WITHOUT_PATH'` - A cycle in the graph was detected, but
+ *   the path *to* the node where the cycle was detected could not be
+ *   determined. This is impossible, and cannot ever happen.
+ */
+export type ErrorCode =
+  | 'GRAPHRUN_NO_NODES'
+  | 'GRAPHRUN_CYCLE_WITHOUT_PATH'
+  | 'GRAPHRUN_TRAVERSAL'
+
+export type ErrorCause<Node> = {
+  code: ErrorCode
+} & (
+  | {
+      code: 'GRAPHRUN_NO_NODES'
+      found: unknown
+      wanted: string
+    }
+  | { code: 'GRAPHRUN_CYCLE_WITHOUT_PATH' }
+  | {
+      code: 'GRAPHRUN_TRAVERSAL'
+      cause: Error
+      node: Node
+      path: Node[]
+    }
+)
+
+export const isGraphRunError = <Node>(
+  er: unknown,
+): er is Error & { cause: ErrorCause<Node> } =>
+  !!er &&
+  typeof er === 'object' &&
+  'cause' in er &&
+  !!er.cause &&
+  typeof er.cause === 'object' &&
+  'code' in er.cause &&
+  ((er.cause.code === 'GRAPHRUN_NO_NODES' &&
+    'found' in er.cause &&
+    'wanted' in er.cause &&
+    typeof er.cause.wanted === 'string') ||
+    (er.cause.code === 'GRAPHRUN_TRAVERSAL' &&
+      'path' in er.cause &&
+      Array.isArray(er.cause.path) &&
+      'node' in er.cause &&
+      'cause' in er.cause) ||
+    er.cause.code === 'GRAPHRUN_CYCLE_WITHOUT_PATH')
+
+/**
  * Options that define the graph and how to traverse it
  */
 export interface RunnerOptions<Node, Result = void> {
@@ -151,6 +208,7 @@ export abstract class RunnerBase<
     if (!options.graph.length) {
       const er = new Error('no nodes provided to graph traversal', {
         cause: {
+          code: 'GRAPHRUN_NO_NODES',
           found: options.graph,
           wanted: '[first: Node, ...rest: Node[]]',
         },
@@ -249,7 +307,9 @@ export abstract class RunnerBase<
       const cycle = this.route(d, n)
       /* c8 ignore start - impossible */
       if (!cycle) {
-        throw new Error('cycle detected, but cycle route not found')
+        throw new Error('cycle detected, but cycle route not found', {
+          cause: { code: 'GRAPHRUN_CYCLE_WITHOUT_PATH' },
+        })
       }
       /* c8 ignore stop */
       cycle.unshift(n)
@@ -285,6 +345,7 @@ export abstract class RunnerBase<
       this.abortController.abort(er)
       const e = new Error('failed graph traversal', {
         cause: {
+          code: 'GRAPHRUN_TRAVERSAL',
           node: n,
           path,
           cause: er as Error,
@@ -322,7 +383,7 @@ export class Runner<Node, Result> extends RunnerBase<
   async getDeps(n: Node) {
     /* c8 ignore next */
     if (this.abortController.signal.aborted) return []
-    const deps = await this.options.getDeps(n);
+    const deps = await this.options.getDeps(n)
     for (const d of deps) {
       const dependents = this.dependents.get(d) ?? new Set()
       this.dependents.set(d, dependents)

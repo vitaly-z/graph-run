@@ -11,23 +11,14 @@ import {
   anySync,
   graphRun,
   graphRunSync,
+  isGraphRunError,
   race,
   raceSync,
   Runner,
   RunnerSync,
 } from '../src/index.js'
 
-const g = {
-  any,
-  anySync,
-  graphRun,
-  graphRunSync,
-  race,
-  raceSync,
-  Runner,
-  RunnerSync,
-}
-g
+RunnerSync
 
 // WARNING: this is the most dangerous problem in mathematics!
 // Note that it defines an infinitely large graph, as it contains all
@@ -583,4 +574,45 @@ t.test('extreme async deadlock scenario', async t => {
     'visited all nodes',
   )
   t.equal(visits[visits.length - 1], 'tap', 'visited tap last')
+})
+
+t.test('error identifier checking', t => {
+  t.equal(
+    isGraphRunError<unknown>(
+      new Error('x', {
+        cause: {
+          code: 'GRAPHRUN_NO_NODES',
+          found: [],
+          wanted: '[first: Node, ...rest: Node[]]',
+        },
+      }),
+    ),
+    true,
+  )
+  t.equal(
+    isGraphRunError<unknown>(
+      new Error('x', {
+        cause: {
+          code: 'GRAPHRUN_TRAVERSAL',
+          node: null,
+          path: [],
+          cause: {},
+        },
+      }),
+    ),
+    true,
+  )
+  t.equal(
+    isGraphRunError<unknown>(
+      new Error('x', {
+        cause: {
+          code: 'GRAPHRUN_CYCLE_WITHOUT_PATH',
+        },
+      }),
+    ),
+    true,
+  )
+  t.equal(isGraphRunError<unknown>(new Error('x')), false)
+  t.equal(isGraphRunError<unknown>(null), false)
+  t.end()
 })
